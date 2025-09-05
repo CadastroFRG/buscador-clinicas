@@ -28,7 +28,7 @@ st.markdown(
 
 # --- Carregar CSV de CEPs com lat/lon (Kaggle) ---
 df_ceps = pd.read_csv(
-    r"C:\Users\brunomelo\sla_cadastro_frg\census_code_cep_coordinates.csv", 
+    r"https://raw.githubusercontent.com/CadastroFRG/buscador-clinicas/refs/heads/main/census_code_cep_coordinates.csv", 
     dtype=str
 )
 df_ceps["POSTCODE"] = df_ceps["POSTCODE"].str.replace("-", "").str.strip()
