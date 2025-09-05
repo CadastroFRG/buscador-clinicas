@@ -1,0 +1,15 @@
+# Ignorar tudo dentro de venv
+venv/
+buscar_cep/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+*.csv
+*.xlsx
+
+# Mas permitir arquivos essenciais para o ambiente funcionar
+
