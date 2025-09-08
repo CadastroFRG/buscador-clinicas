@@ -125,7 +125,7 @@ if st.session_state.buscou and cep_input:
         # Filtro de especialidades
         if especialidades_selecionadas:
             df_filtrado = df_clinicas[
-                df_clinicas["ESPECIALIDADES"].apply(
+                df_clinicas["ESPECIALIDADE"].apply(
                     lambda x: any(esp in str(x).upper() for esp in especialidades_selecionadas)
                 )
             ].copy()
