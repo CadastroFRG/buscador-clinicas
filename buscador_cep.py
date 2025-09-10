@@ -34,7 +34,7 @@ def get_base64_of_bin_file(bin_file):
     return base64.b64encode(data).decode()
 
 # --- Incluir logo no canto superior esquerdo ---
-logo_base64 = get_base64_of_bin_file(r"C:\Users\brunomelo\Downloads\convenio040.png")
+logo_base64 = get_base64_of_bin_file(r"convenio040.png")
 st.markdown(
     f"""
     <style>
