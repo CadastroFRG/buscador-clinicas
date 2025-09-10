@@ -7,6 +7,7 @@ from streamlit_folium import st_folium
 import brazilcep
 import requests
 import urllib3
+import base64
 
 # --- Ignorar SSL ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -21,9 +22,37 @@ requests.get = new_request_get
 
 # --- Configuração da página ---
 st.set_page_config(
-    page_title="Buscador de Clínicas",
+    page_title="Buscador de Credenciados por Geolocalização.",
     layout="wide",
     initial_sidebar_state="collapsed"
+)
+
+# --- Função para converter imagem local em base64 ---
+def get_base64_of_bin_file(bin_file):
+    with open(bin_file, 'rb') as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+# --- Incluir logo no canto superior esquerdo ---
+logo_base64 = get_base64_of_bin_file(r"C:\Users\brunomelo\Downloads\convenio040.png")
+st.markdown(
+    f"""
+    <style>
+        .logo-container {{
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            z-index: 100;
+        }}
+        .logo-container img {{
+            width: 200px; /* ajuste do tamanho da logo */
+        }}
+    </style>
+    <div class="logo-container">
+        <img src="data:image/png;base64,{logo_base64}">
+    </div>
+    """,
+    unsafe_allow_html=True
 )
 
 # --- CSS para mapa em tela cheia ---
@@ -59,10 +88,6 @@ lista_redes = sorted(lista_redes)
 
 # --- Função para buscar lat/lon a partir de um endereço completo ---
 def buscar_lat_long_por_endereco(endereco):
-    """
-    Converte um endereço de texto em coordenadas de latitude e longitude
-    usando a API de geocodificação do Nominatim (OpenStreetMap).
-    """
     geolocator = Nominatim(user_agent="seu-app-de-clinicas")
     try:
         location = geolocator.geocode(endereco, timeout=10)
@@ -84,7 +109,7 @@ def calcular_distancia(lat1, lon1, lat2, lon2):
         return None
 
 # --- Streamlit ---
-st.title("🔎 Buscador de Clínicas por CEP")
+st.title("🔎 Buscador de Credenciados por Geolocalização.")
 
 if "buscou" not in st.session_state:
     st.session_state.buscou = False
@@ -98,9 +123,9 @@ especialidades_selecionadas = st.multiselect(
     default=[]
 )
 
-# NOVO: Filtro por Rede
+# Filtro por Rede
 redes_selecionadas = st.multiselect(
-    "Filtrar por Rede (se não escolher, mostra todas):",
+    "Filtrar por Plano (se não escolher, mostra todas):",
     options=lista_redes,
     default=[]
 )
