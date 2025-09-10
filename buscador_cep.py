@@ -46,14 +46,16 @@ df_clinicas = pd.read_excel("enderecos_com_cep_latlong.xlsx")
 
 # --- Criar lista única de especialidades ---
 lista_especialidades = []
-for esp in df_clinicas["ESPECIALIDADE"].dropna():  # ajuste: usar coluna específica
+for esp in df_clinicas["ESPECIALIDADE"].dropna():
     for item in esp.split(","):
-        item_limpo = item.strip().upper()  # padroniza maiúsculo
+        item_limpo = item.strip().upper()
         if item_limpo:
             lista_especialidades.append(item_limpo)
-
-# Remove duplicados e ordena
 lista_especialidades = sorted(set(lista_especialidades))
+
+# --- Criar lista única de redes ---
+lista_redes = df_clinicas["Rede"].dropna().unique().tolist()
+lista_redes = sorted(lista_redes)
 
 # --- Função para buscar lat/lon a partir de um endereço completo ---
 def buscar_lat_long_por_endereco(endereco):
@@ -96,6 +98,13 @@ especialidades_selecionadas = st.multiselect(
     default=[]
 )
 
+# NOVO: Filtro por Rede
+redes_selecionadas = st.multiselect(
+    "Filtrar por Rede (se não escolher, mostra todas):",
+    options=lista_redes,
+    default=[]
+)
+
 # Botão de busca
 if st.button("🔍 Buscar"):
     st.session_state.buscou = True
@@ -122,15 +131,20 @@ if st.session_state.buscou and cep_input:
     if lat_ref and lon_ref:
         st.success(f"Localização encontrada: {lat_ref:.6f}, {lon_ref:.6f}")
 
-        # Filtro de especialidades
+        # Filtro de especialidades E redes
+        df_filtrado = df_clinicas.copy()
+
         if especialidades_selecionadas:
-            df_filtrado = df_clinicas[
-                df_clinicas["ESPECIALIDADE"].apply(
+            df_filtrado = df_filtrado[
+                df_filtrado["ESPECIALIDADE"].apply(
                     lambda x: any(esp in str(x).upper() for esp in especialidades_selecionadas)
                 )
-            ].copy()
-        else:
-            df_filtrado = df_clinicas.copy()
+            ]
+
+        if redes_selecionadas:
+            df_filtrado = df_filtrado[
+                df_filtrado["Rede"].isin(redes_selecionadas)
+            ]
 
         # Calcular distância em linha reta
         df_filtrado["DISTANCIA_KM"] = df_filtrado.apply(
@@ -158,6 +172,6 @@ if st.session_state.buscou and cep_input:
 
             st_folium(mapa, use_container_width=True, height=800)
         else:
-            st.warning("Nenhuma clínica encontrada para essa especialidade na região.")
+            st.warning("Nenhuma clínica encontrada com os filtros selecionados.")
     else:
         st.error("Não foi possível encontrar a localização do CEP. Verifique e tente novamente.")

@@ -4,7 +4,7 @@ import time
 from geopy.geocoders import Nominatim
 
 # Caminho da sua planilha
-arquivo_excel = r"C:\Users\brunomelo\Downloads\REDE PLAMES IDEAL ATUALIZADA_28-08-25.xlsx"
+arquivo_excel = r"C:\Users\brunomelo\Buscar_cep\REDE PLAMES IDEAL ATUALIZADA_28-08-25.xlsx"
 
 # Lê a planilha
 df = pd.read_excel(arquivo_excel)
