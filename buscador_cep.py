@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 from geopy.distance import geodesic
-from geopy.geocoders import Nominatim
 import folium
 from streamlit_folium import st_folium
 import brazilcep
 import requests
 import urllib3
 import base64
+import googlemaps
 
 # --- Ignorar SSL ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,26 +34,29 @@ def get_base64_of_bin_file(bin_file):
     return base64.b64encode(data).decode()
 
 # --- Incluir logo no canto superior esquerdo ---
-logo_base64 = get_base64_of_bin_file(r"convenio040.png")
-st.markdown(
-    f"""
-    <style>
-        .logo-container {{
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            z-index: 100;
-        }}
-        .logo-container img {{
-            width: 200px; /* ajuste do tamanho da logo */
-        }}
-    </style>
-    <div class="logo-container">
-        <img src="data:image/png;base64,{logo_base64}">
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+try:
+    logo_base64 = get_base64_of_bin_file("convenio040.png")
+    st.markdown(
+        f"""
+        <style>
+            .logo-container {{
+                position: absolute;
+                top: 15px;
+                left: 15px; /* canto esquerdo */
+                z-index: 100;
+            }}
+            .logo-container img {{
+                width: 200px;
+            }}
+        </style>
+        <div class="logo-container">
+            <img src="data:image/png;base64,{logo_base64}">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+except Exception:
+    st.warning("⚠️ Logo não encontrada (convenio040.png).")
 
 # --- CSS para mapa em tela cheia ---
 st.markdown(
@@ -71,12 +74,16 @@ st.markdown(
 )
 
 # --- Carregar base de clínicas ---
-df_clinicas = pd.read_excel("enderecos_com_cep_latlong.xlsx")
+@st.cache_data
+def carregar_base():
+    return pd.read_excel("enderecos_com_cep_latlong.xlsx")
+
+df_clinicas = carregar_base()
 
 # --- Criar lista única de especialidades ---
 lista_especialidades = []
 for esp in df_clinicas["ESPECIALIDADE"].dropna():
-    for item in esp.split(","):
+    for item in str(esp).split(","):
         item_limpo = item.strip().upper()
         if item_limpo:
             lista_especialidades.append(item_limpo)
@@ -86,20 +93,23 @@ lista_especialidades = sorted(set(lista_especialidades))
 lista_redes = df_clinicas["Rede"].dropna().unique().tolist()
 lista_redes = sorted(lista_redes)
 
-# --- Função para buscar lat/lon a partir de um endereço completo ---
+# --- Configurar Google Maps ---
+gmaps = googlemaps.Client(key=st.secrets["GOOGLE_API_KEY"])
+
+# --- Função para buscar lat/lon a partir de um endereço ---
 def buscar_lat_long_por_endereco(endereco):
-    geolocator = Nominatim(user_agent="seu-app-de-clinicas")
     try:
-        location = geolocator.geocode(endereco, timeout=10)
-        if location:
-            return location.latitude, location.longitude
+        geocode_result = gmaps.geocode(endereco)
+        if geocode_result:
+            location = geocode_result[0]['geometry']['location']
+            return location['lat'], location['lng']
         else:
             return None, None
     except Exception as e:
-        st.error(f"Erro na geocodificação do endereço: {e}")
+        st.error(f"Erro na geocodificação (Google): {e}")
         return None, None
 
-# --- Função para calcular distância em linha reta ---
+# --- Função para calcular distância ---
 def calcular_distancia(lat1, lon1, lat2, lon2):
     try:
         if None in [lat1, lon1, lat2, lon2]:
@@ -137,7 +147,6 @@ if st.button("🔍 Buscar"):
 # Só executa se já buscou e tem CEP válido
 if st.session_state.buscou and cep_input:
     try:
-        # 1. Obter os dados do endereço usando o brazilcep
         endereco_detalhes = brazilcep.get_address_from_cep(
             cep_input.replace("-", "").strip()
         )
@@ -152,11 +161,9 @@ if st.session_state.buscou and cep_input:
         st.error(f"Erro ao buscar o CEP: {e}")
         lat_ref, lon_ref = None, None
 
-    # --- Se conseguiu localizar o CEP ---
     if lat_ref and lon_ref:
         st.success(f"Localização encontrada: {lat_ref:.6f}, {lon_ref:.6f}")
 
-        # Filtro de especialidades E redes
         df_filtrado = df_clinicas.copy()
 
         if especialidades_selecionadas:
@@ -164,20 +171,19 @@ if st.session_state.buscou and cep_input:
                 df_filtrado["ESPECIALIDADE"].apply(
                     lambda x: any(esp in str(x).upper() for esp in especialidades_selecionadas)
                 )
-            ]
+            ].copy()
 
         if redes_selecionadas:
             df_filtrado = df_filtrado[
                 df_filtrado["Rede"].isin(redes_selecionadas)
-            ]
+            ].copy()
 
-        # Calcular distância em linha reta
+        # Calcular distância
         df_filtrado["DISTANCIA_KM"] = df_filtrado.apply(
-            lambda row: calcular_distancia(lat_ref, lon_ref, row["LATITUDE"], row["LONGITUDE"]),
+            lambda row: calcular_distancia(lat_ref, lon_ref, row.get("LATITUDE"), row.get("LONGITUDE")),
             axis=1
         )
 
-        # Selecionar 10 clínicas mais próximas
         resultados = df_filtrado.dropna(subset=["DISTANCIA_KM"]).sort_values("DISTANCIA_KM").head(10)
 
         if not resultados.empty:
