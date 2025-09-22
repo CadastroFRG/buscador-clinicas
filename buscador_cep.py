@@ -58,7 +58,7 @@ try:
             .logo-container {{
                 position: absolute;
                 top: 15px;
-                left: 15px;
+                right: 15px;
                 z-index: 100;
             }}
             .logo-container img {{
@@ -253,7 +253,7 @@ if st.session_state.buscou and cep_input:
             )
 
             st.subheader("🗺️ Mapa das clínicas próximas")
-            mapa = folium.Map(location=[lat_ref, lon_ref], zoom_start=12)
+            mapa = folium.Map(location=[lat_ref, lon_ref], zoom_start=17)
             folium.Marker([lat_ref, lon_ref], tooltip="Você está aqui", icon=folium.Icon(color="blue")).add_to(mapa)
 
             for _, row in df_top_10.iterrows():

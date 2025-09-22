@@ -12,3 +12,5 @@ __pycache__/
 
 # Mas permitir arquivos essenciais para o ambiente funcionar
 
+.streamlit/
+
