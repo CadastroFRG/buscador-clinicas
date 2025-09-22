@@ -8,6 +8,22 @@ import requests
 import urllib3
 import base64
 import googlemaps
+import os
+
+# --- Configuração da chave da API do Google Maps ---
+# Centraliza a lógica de carregamento da chave em um só lugar.
+# Tenta carregar de st.secrets (Streamlit Cloud), se falhar, tenta
+# carregar de uma variável de ambiente local (para desenvolvimento).
+try:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+except (FileNotFoundError, KeyError):
+    api_key = os.environ.get("GOOGLE_API_KEY_LOCAL")
+
+if not api_key:
+    st.error("Chave da API do Google não encontrada. Verifique se a variável GOOGLE_API_KEY ou GOOGLE_API_KEY_LOCAL está definida.")
+    st.stop()
+
+gmaps = googlemaps.Client(key=api_key)
 
 # --- Ignorar SSL ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -42,7 +58,7 @@ try:
             .logo-container {{
                 position: absolute;
                 top: 15px;
-                left: 15px; /* canto esquerdo */
+                left: 15px;
                 z-index: 100;
             }}
             .logo-container img {{
@@ -93,9 +109,6 @@ lista_especialidades = sorted(set(lista_especialidades))
 lista_redes = df_clinicas["Rede"].dropna().unique().tolist()
 lista_redes = sorted(lista_redes)
 
-# --- Configurar Google Maps ---
-gmaps = googlemaps.Client(key=st.secrets["GOOGLE_API_KEY"])
-
 # --- Função para buscar lat/lon a partir de um endereço ---
 def buscar_lat_long_por_endereco(endereco):
     try:
@@ -109,7 +122,7 @@ def buscar_lat_long_por_endereco(endereco):
         st.error(f"Erro na geocodificação (Google): {e}")
         return None, None
 
-# --- Função para calcular distância ---
+# --- Função para calcular distância em linha reta ---
 def calcular_distancia(lat1, lon1, lat2, lon2):
     try:
         if None in [lat1, lon1, lat2, lon2]:
@@ -144,7 +157,7 @@ redes_selecionadas = st.multiselect(
 if st.button("🔍 Buscar"):
     st.session_state.buscou = True
 
-# Só executa se já buscou e tem CEP válido
+# --- Executa busca ---
 if st.session_state.buscou and cep_input:
     try:
         endereco_detalhes = brazilcep.get_address_from_cep(
@@ -156,7 +169,6 @@ if st.session_state.buscou and cep_input:
         else:
             st.error("CEP não encontrado. Verifique o CEP digitado.")
             lat_ref, lon_ref = None, None
-
     except Exception as e:
         st.error(f"Erro ao buscar o CEP: {e}")
         lat_ref, lon_ref = None, None
@@ -178,31 +190,86 @@ if st.session_state.buscou and cep_input:
                 df_filtrado["Rede"].isin(redes_selecionadas)
             ].copy()
 
-        # Calcular distância
+        # Pular o processamento se não houver clínicas
+        if df_filtrado.empty:
+            st.warning("Nenhuma clínica encontrada com os filtros selecionados.")
+            st.stop()
+
+        # Adiciona a distância em linha reta (cálculo local, muito rápido)
         df_filtrado["DISTANCIA_KM"] = df_filtrado.apply(
-            lambda row: calcular_distancia(lat_ref, lon_ref, row.get("LATITUDE"), row.get("LONGITUDE")),
+            lambda row: calcular_distancia(lat_ref, lon_ref, row["LATITUDE"], row["LONGITUDE"]),
             axis=1
         )
 
-        resultados = df_filtrado.dropna(subset=["DISTANCIA_KM"]).sort_values("DISTANCIA_KM").head(10)
+        # Filtra as 10 mais próximas por distância em linha reta
+        df_top_10 = df_filtrado.sort_values("DISTANCIA_KM").head(25).copy()
 
-        if not resultados.empty:
+        # Prepara a lista de destinos para a API Distance Matrix
+        destinos = [
+            (row["LATITUDE"], row["LONGITUDE"])
+            for _, row in df_top_10.iterrows()
+        ]
+
+        # Faz uma ÚNICA chamada para a Distance Matrix API para os 10 mais próximos
+        try:
+            result = gmaps.distance_matrix(
+                origins=[(lat_ref, lon_ref)],
+                destinations=destinos,
+                mode="driving",
+                language="pt-BR"
+            )
+
+            # Inicializa colunas para evitar erros de chave
+            df_top_10["DISTANCIA_TRAJETO_KM"] = None
+            df_top_10["DISTANCIA_TRAJETO_TEXTO"] = None
+            df_top_10["TEMPO_TRAJETO"] = None
+
+            # Atualiza o DataFrame com os resultados da API
+            if result["rows"][0]["elements"]:
+                for i, element in enumerate(result["rows"][0]["elements"]):
+                    if element["status"] == "OK":
+                        df_top_10.loc[df_top_10.index[i], "DISTANCIA_TRAJETO_KM"] = element["distance"]["value"] / 1000
+                        df_top_10.loc[df_top_10.index[i], "DISTANCIA_TRAJETO_TEXTO"] = element["distance"]["text"]
+                        df_top_10.loc[df_top_10.index[i], "TEMPO_TRAJETO"] = element["duration"]["text"]
+
+            # Adiciona o link do Google Maps para cada clínica
+            df_top_10['Abrir no Google Maps'] = df_top_10.apply(
+                lambda row: f"https://www.google.com/maps/dir/?api=1&origin={lat_ref},{lon_ref}&destination={row['LATITUDE']},{row['LONGITUDE']}&travelmode=driving",
+                axis=1
+            )
+
+            # Exibe os resultados
             st.subheader("🏥 Clínicas mais próximas")
-            st.dataframe(resultados, use_container_width=True)
+            st.dataframe(
+                df_top_10,
+                column_config={
+                    "Abrir no Google Maps": st.column_config.LinkColumn(
+                        "Abrir no Google Maps",
+                        help="Clique para traçar a rota no Google Maps",
+                        display_text="Abrir Mapa"
+                    )
+                },
+                use_container_width=True
+            )
 
             st.subheader("🗺️ Mapa das clínicas próximas")
             mapa = folium.Map(location=[lat_ref, lon_ref], zoom_start=12)
             folium.Marker([lat_ref, lon_ref], tooltip="Você está aqui", icon=folium.Icon(color="blue")).add_to(mapa)
 
-            for _, row in resultados.iterrows():
+            for _, row in df_top_10.iterrows():
+                tooltip_text = f"{row['NOME DO PRESTADOR']} - {row['ESPECIALIDADE']}\n" \
+                               f"Distância em linha reta: {row['DISTANCIA_KM']:.1f} km\n" \
+                               f"Distância de carro: {row.get('DISTANCIA_TRAJETO_TEXTO', 'N/A')} ({row.get('TEMPO_TRAJETO', 'N/A')})"
                 folium.Marker(
                     [row["LATITUDE"], row["LONGITUDE"]],
-                    tooltip=f"{row['NOME DO PRESTADOR']} - {row['ESPECIALIDADE']} ({row['DISTANCIA_KM']:.1f} km)",
+                    tooltip=tooltip_text,
                     icon=folium.Icon(color="red")
                 ).add_to(mapa)
 
             st_folium(mapa, use_container_width=True, height=800)
-        else:
-            st.warning("Nenhuma clínica encontrada com os filtros selecionados.")
+
+        except Exception as e:
+            st.error(f"Erro ao calcular distâncias de trajeto: {e}")
+
     else:
         st.error("Não foi possível encontrar a localização do CEP. Verifique e tente novamente.")
