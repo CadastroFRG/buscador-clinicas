@@ -1,24 +1,12 @@
 import streamlit as st
 import pandas as pd
 from geopy.distance import geodesic
-from geopy.geocoders import Nominatim
+from geopy.geocoders import ArcGIS  # Alterado para ArcGIS
 import folium
 from streamlit_folium import st_folium
 import brazilcep
 import requests
-import urllib3
 import base64
-import time
-
-# --- Ignorar SSL ---
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-requests.packages.urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-old_request_get = requests.get
-def new_request_get(*args, **kwargs):
-    kwargs['verify'] = False
-    return old_request_get(*args, **kwargs)
-requests.get = new_request_get
 
 # --- Configuração da página ---
 st.set_page_config(
@@ -60,12 +48,16 @@ if logo_base64:
 # --- Carregar base de dados ---
 @st.cache_data
 def carregar_base():
+    # Certifique-se que o arquivo está na mesma pasta do script no GitHub/Streamlit
     df = pd.read_excel("enderecos_com_cep_latlong.xlsx")
-    # REMOVE LINHAS SEM LAT/LONG JÁ NO CARREGAMENTO
     df = df.dropna(subset=["LATITUDE", "LONGITUDE"])
     return df
 
-df_clinicas = carregar_base()
+try:
+    df_clinicas = carregar_base()
+except Exception as e:
+    st.error(f"Erro ao carregar base de dados: {e}")
+    st.stop()
 
 # --- Filtros ---
 lista_especialidades = []
@@ -76,14 +68,18 @@ for esp in df_clinicas["ESPECIALIDADE"].dropna():
 lista_especialidades = sorted(set(lista_especialidades))
 lista_redes = sorted(df_clinicas["Rede"].dropna().unique().tolist())
 
-# --- Geocodificação ---
+# --- Geocodificação (Ajustada para Produção) ---
 @st.cache_data(show_spinner="Buscando coordenadas...")
 def buscar_lat_long_por_endereco(endereco):
     try:
-        geolocator = Nominatim(user_agent="projeto_valsa_bruno_v5")
+        # ArcGIS é mais amigável com IPs de servidores (Streamlit Cloud, Heroku, etc)
+        geolocator = ArcGIS(user_agent="buscador_credenciados_v1")
         location = geolocator.geocode(endereco, timeout=15)
-        return (location.latitude, location.longitude) if location else (None, None)
-    except:
+        if location:
+            return (location.latitude, location.longitude)
+        return (None, None)
+    except Exception as e:
+        print(f"Erro geopy: {e}")
         return None, None
 
 def calcular_distancia(lat1, lon1, lat2, lon2):
@@ -108,27 +104,39 @@ if st.button("🔍 Localizar Clínicas", use_container_width=True):
         st.error("Por favor, digite um CEP.")
     else:
         try:
-            end_detalhes = brazilcep.get_address_from_cep(cep_input.replace("-", "").strip())
+            # Limpa o CEP e busca o endereço
+            cep_limpo = cep_input.replace("-", "").replace(".", "").strip()
+            end_detalhes = brazilcep.get_address_from_cep(cep_limpo)
+            
             if end_detalhes:
                 rua = end_detalhes.get('street', '')
                 cidade = end_detalhes.get('city', '')
                 uf = end_detalhes.get('uf', '')
+                # Monta string de busca para o geolocator
                 endereco_completo = f"{rua}, {cidade} - {uf}, Brazil"
                 
                 lat_ref, lon_ref = buscar_lat_long_por_endereco(endereco_completo)
                 
                 if lat_ref and lon_ref:
                     df_f = df_clinicas.copy()
+                    
+                    # Filtro Especialidade
                     if espec_sel:
                         df_f = df_f[df_f["ESPECIALIDADE"].apply(lambda x: any(e in str(x).upper() for e in espec_sel))]
+                    
+                    # Filtro Rede
                     if rede_sel:
                         df_f = df_f[df_f["Rede"].isin(rede_sel)]
                     
                     if not df_f.empty:
-                        df_f["DISTANCIA_KM"] = df_f.apply(lambda r: calcular_distancia(lat_ref, lon_ref, r["LATITUDE"], r["LONGITUDE"]), axis=1)
-                        # Garante que não temos NaNs após o cálculo
+                        # Cálculo de distância
+                        df_f["DISTANCIA_KM"] = df_f.apply(
+                            lambda r: calcular_distancia(lat_ref, lon_ref, r["LATITUDE"], r["LONGITUDE"]), axis=1
+                        )
+                        
                         df_res = df_f.dropna(subset=["DISTANCIA_KM"]).sort_values("DISTANCIA_KM").head(25).copy()
                         
+                        # Link do Google Maps
                         df_res['Google Maps'] = df_res.apply(
                             lambda r: f"https://www.google.com/maps/dir/?api=1&origin={lat_ref},{lon_ref}&destination={r['LATITUDE']},{r['LONGITUDE']}&travelmode=driving", axis=1
                         )
@@ -139,16 +147,16 @@ if st.button("🔍 Localizar Clínicas", use_container_width=True):
                     else:
                         st.session_state.df_resultados = "vazio"
                 else:
-                    st.error("Coordenadas não encontradas para este CEP.")
+                    st.error("Não conseguimos obter as coordenadas do seu endereço. Tente um CEP próximo.")
             else:
-                st.error("CEP inválido.")
+                st.error("CEP não encontrado na base do BrazilCEP.")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao processar CEP: {e}")
 
 # --- Exibição ---
 if st.session_state.df_resultados is not None:
     if isinstance(st.session_state.df_resultados, str):
-        st.warning("Nenhuma clínica encontrada.")
+        st.warning("Nenhuma clínica encontrada para os filtros selecionados.")
     else:
         df_exibir = st.session_state.df_resultados
         lat_ref, lon_ref = st.session_state.coords_ref
@@ -167,17 +175,19 @@ if st.session_state.df_resultados is not None:
 
         st.subheader("🗺️ Visualização no Mapa")
         mapa = folium.Map(location=[lat_ref, lon_ref], zoom_start=14)
-        folium.Marker([lat_ref, lon_ref], tooltip="Você", icon=folium.Icon(color="blue", icon="home")).add_to(mapa)
+        folium.Marker(
+            [lat_ref, lon_ref], 
+            tooltip="Você está aqui", 
+            icon=folium.Icon(color="blue", icon="home")
+        ).add_to(mapa)
 
-        # O SEGREDO ESTÁ AQUI: Só adiciona marcador se as coordenadas forem válidas
         for _, row in df_exibir.iterrows():
-            if pd.notna(row["LATITUDE"]) and pd.notna(row["LONGITUDE"]):
-                folium.Marker(
-                    [row["LATITUDE"], row["LONGITUDE"]],
-                    popup=f"<b>{row['NOME DO PRESTADOR']}</b>",
-                    tooltip=row['NOME DO PRESTADOR'],
-                    icon=folium.Icon(color="red", icon="plus", prefix="fa")
-                ).add_to(mapa)
+            folium.Marker(
+                [row["LATITUDE"], row["LONGITUDE"]],
+                popup=f"<b>{row['NOME DO PRESTADOR']}</b><br>{row['ESPECIALIDADE']}",
+                tooltip=row['NOME DO PRESTADOR'],
+                icon=folium.Icon(color="red", icon="plus", prefix="fa")
+            ).add_to(mapa)
 
         st_folium(mapa, use_container_width=True, height=500, key="mapa_final")
 
