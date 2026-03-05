@@ -1,5 +1,7 @@
 # Ignorar tudo dentro de venv
+.venv/
 venv/
+__pycache__/
 buscar_cep/
 __pycache__/
 *.pyc
